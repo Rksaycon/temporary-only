@@ -1,0 +1,59 @@
+{
+  "app_icon_configuration": {
+    "app_name": "Milaud",
+    "version": "1.0.0",
+    "description": "Participatory Governance for Milaor Residents",
+    
+    "colors": {
+      "primary": "#0056A3",
+      "secondary": "#FDB913",
+      "accent": "#CE1126",
+      "background": "#FFFFFF"
+    },
+    
+    "icon_sizes": {
+      "android": {
+        "mdpi": 48,
+        "hdpi": 72,
+        "xhdpi": 96,
+        "xxhdpi": 144,
+        "xxxhdpi": 192
+      },
+      "ios": {
+        "iphone_20": 20,
+        "iphone_29": 29,
+        "iphone_40": 40,
+        "iphone_60": 60,
+        "ipad_20": 20,
+        "ipad_29": 29,
+        "ipad_40": 40,
+        "ipad_76": 76,
+        "ipad_83_5": 83.5,
+        "app_store": 1024
+      }
+    },
+    
+    "design_guidelines": {
+      "logo": "assets/images/milaudlogo.png",
+      "preferred_format": "PNG with transparency",
+      "minimum_size": "1024x1024 for source",
+      "corner_radius": "20% for iOS, square for Android",
+      "padding": "10% safe area"
+    },
+    
+    "generation_instructions": "Use the source logo at 1024x1024 to generate all required sizes. Maintain aspect ratio and apply appropriate corner radius for each platform.",
+    
+    "platform_specific": {
+      "android": {
+        "adaptive_icon": true,
+        "foreground_layer": "assets/images/milaudlogo.png",
+        "background_layer": "#0056A3",
+        "monochrome": false
+      },
+      "ios": {
+        "prerendered": false,
+        "preserve_vector_data": true
+      }
+    }
+  }
+}

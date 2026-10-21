@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!.env.example
+app.env
+*.jks
+*.keystore
+key.properties
+local.properties
