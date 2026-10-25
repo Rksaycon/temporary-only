@@ -9,8 +9,8 @@
 // Used by CitizenReportService.submitReport() in app_services.dart to
 // auto-suggest a severity level and flag whether an attached photo looks
 // like it matches a real disaster scene. Both results are suggestions —
-// severity is presented to admins for review, rather than to residents.
-// Classification failure never rejects a submission.
+// the resident (and later, an admin) can always see/override them; this
+// service never blocks a submission on its own.
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -144,8 +144,8 @@ class AiTriageService {
 
   /// Classifies a report's description text for severity. Returns null on
   /// any failure (network issue, backend down, etc.) rather than throwing —
-  /// callers should leave severity unassigned for admin review when AI is
-  /// unavailable and never reject a submission because classification failed.
+  /// callers should treat a null result as "AI unavailable, fall back to
+  /// whatever the resident picked manually" and never block submission.
   ///
   /// [reportType] should be 'Emergency' or 'Minor Concern' when known — the
   /// backend forces 'Low' severity outright for 'Minor Concern' without

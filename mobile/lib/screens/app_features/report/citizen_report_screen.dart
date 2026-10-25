@@ -101,7 +101,7 @@ class _CitizenReportScreenState extends ConsumerState<CitizenReportScreen> {
   // Concern' makes the backend force severity to 'Low' without even
   // running the model.
   String _reportType = 'Emergency';
-  // Citizens choose a basic category; AI findings are saved for admin review.
+  // The citizen selects a basic category; AI findings are for admin review.
   String? _selectedCategory;
   final List<ReportPhoto> _attachedPhotos = [];
   final ImagePicker _picker = ImagePicker();
@@ -338,7 +338,7 @@ class _CitizenReportScreenState extends ConsumerState<CitizenReportScreen> {
         location: _locationController.text.trim(),
         photoFiles: _attachedPhotos,
         reportType: _reportType,
-        // Severity is classified by the service for admin review.
+        // AI assessment runs at submission and is saved for admin review.
       );
 
       if (!mounted) return;

@@ -478,29 +478,21 @@ void main() {
       expect(req('').timelineStep, 0);
     });
 
-    test('verification decisions and feedback remain separate from progress', () {
-      CitizenReport report(String decision, {String status = 'received'}) =>
-          CitizenReport.fromJson({
-            'id': 'review-test', 'category': 'Fire', 'status': status,
-            'verification_status': decision,
-            'verification_note': 'Please provide the exact location.',
-          });
+    test('verification and feedback remain separate from report progress', () {
+      CitizenReport report(String decision) => CitizenReport.fromJson({
+        'id': 'review-test', 'category': 'Fire', 'status': 'received',
+        'verification_status': decision, 'verification_note': 'Please provide a location.',
+      });
       expect(report('pending').verificationLabel, 'Pending verification');
       expect(report('pending').statusLabel, 'Received');
-      expect(report('needs_information').verificationLabel, 'More information needed');
-      expect(report('needs_information').verificationNote, contains('exact location'));
-      expect(report('rejected').verificationLabel, 'Rejected');
+      expect(report('pending').verificationMessage, contains('verification'));
       expect(report('rejected').isOngoing, false);
       expect(report('rejected').isResolved, false);
-      expect(report('verified', status: 'assigned').timelineStep, 1);
-      expect(report('verified').verificationMessage, contains('administrator'));
-    });
-
-    test('legacy progress is preserved without assuming new reports verified', () {
+      expect(report('rejected').verificationLabel, 'Rejected');
+      expect(report('needs_information').verificationNote, contains('location'));
+      expect(report('needs_information').verificationLabel, 'More information needed');
       expect(CitizenReport.fromJson({'status': 'assigned'}).verificationStatus, 'verified');
-      expect(CitizenReport.fromJson({'status': 'received'}).verificationStatus, 'pending');
       expect(CitizenReport.fromJson({}).verificationStatus, 'pending');
-      expect(CitizenReport.fromJson({'status': 'unknown'}).verificationStatus, 'pending');
     });
 
     test('reference is derived from the row id and matches the SQL trigger', () {

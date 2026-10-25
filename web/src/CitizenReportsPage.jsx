@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
 import { supabase } from "./supabaseClient";
 import ReportVerificationPanel from "./ReportVerificationPanel";
-import { verificationOf, verificationLabel } from "./reportVerification";
+import { verificationOf, verificationLabel, canProgress, reportStatus, matchesStatus } from "./reportVerification";
 
 // Status vocabulary matches CitizenReportService._statusMessage() in the
 // mobile app exactly, so a status set here maps to the message residents see.
@@ -12,6 +12,7 @@ const statusColors = {
   assigned: "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300",
   in_progress: "bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-300",
   resolved: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300",
+  rejected: "bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300",
   closed: "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300",
 };
 
@@ -33,13 +34,11 @@ const CitizenReportsPage = () => {
   const [error, setError] = useState("");
   const [selectedReport, setSelectedReport] = useState(null);
   const [filter, setFilter] = useState("all");
-  // Show every report, including unclassified reports awaiting verification.
+  // Include reports awaiting AI classification; severity sorting keeps urgent reports first.
   const [severityFilter, setSeverityFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [savingReportId, setSavingReportId] = useState(null);
+  const [savingId, setSavingId] = useState(null);
   const [verificationFilter, setVerificationFilter] = useState("all");
-  const [classifyingId, setClassifyingId] = useState(null);
-  const [triageError, setTriageError] = useState(null);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -72,91 +71,39 @@ const CitizenReportsPage = () => {
     fetchReports();
   }, [fetchReports]);
 
-  const handleClassifySeverity = async (report) => {
-    if (classifyingId || savingReportId || !report.description?.trim()) return;
-    setClassifyingId(report.id);
-    setTriageError(null);
-    try {
-      const response = await fetch("https://jus1012-triage-delro-api.hf.space/classify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          report_text: report.description,
-          category: report.category,
-          report_type: ["Fire", "Flooding", "Medical Emergency", "Infrastructure Damage"].includes(report.category)
-            ? "Emergency" : "Minor Concern",
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!response.ok) throw new Error("Automatic severity is unavailable. Please try again.");
-      const result = await response.json();
-      const level = result.severity === "Critical" ? "High" : result.severity;
-      const confidence = Number(result.severity_confidence);
-      if (!Object.hasOwn(SEVERITY_ORDER, level) || !Number.isFinite(confidence) || result.severity_confidence == null) {
-        throw new Error("The classification service returned an invalid result.");
-      }
-      let query = supabase.from("citizen_reports")
-        .update({
-          ...(verificationOf(report) !== "verified" ? { severity: level } : {}),
-          ai_suggested_severity: result.severity,
-          ai_severity_confidence: confidence,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", report.id);
-      if (report.updated_at) query = query.eq("updated_at", report.updated_at);
-      const { data, error: saveError } = await query
-        .select("id, severity, ai_suggested_severity, ai_severity_confidence, updated_at")
-        .single();
-      if (saveError) throw saveError;
-      setReports((prev) => prev.map((item) => item.id === report.id ? { ...item, ...data } : item));
-      setSelectedReport((prev) => prev?.id === report.id ? { ...prev, ...data } : prev);
-    } catch (err) {
-      setTriageError({ reportId: report.id, message: err.message || "Could not classify this report. Please try again." });
-    } finally {
-      setClassifyingId(null);
-    }
+  const saveReport = async (report, updates) => {
+    let query = supabase.from("citizen_reports").update(updates).eq("id", report.id);
+    if (report.updated_at) query = query.eq("updated_at", report.updated_at);
+    const { data, error: saveError } = await query.select("*").single();
+    if (saveError) throw new Error(`${saveError.message}. Refresh if another admin changed this report. Verification requires citizen_reports_verification.sql to be installed.`);
+    setReports(prev => prev.map(item => item.id === data.id ? { ...item, ...data } : item));
+    setSelectedReport(prev => prev?.id === data.id ? { ...prev, ...data } : prev);
   };
-
-  const mergeReport = (data) => {
-    setReports((prev) => prev.map((r) => r.id === data.id ? { ...r, ...data } : r));
-    setSelectedReport((prev) => prev?.id === data.id ? { ...prev, ...data } : prev);
-  };
-
   const handleReview = async (report, decision, note, severity) => {
-    if (savingReportId || classifyingId) throw new Error("Wait for the current operation to finish.");
-    setSavingReportId(report.id);
+    if (savingId) throw new Error("Wait for the current save to finish.");
+    if (decision !== "verified" && !note.trim()) throw new Error("A reason is required.");
+    if (decision === "verified" && !["High","Medium","Low"].includes(severity)) throw new Error("Choose the final severity.");
+    setSavingId(report.id);
     try {
       const updates = { verification_status: decision, verification_note: note };
       if (decision === "verified") {
         updates.severity = severity;
         if (["received", "assigned"].includes(report.status || "received")) updates.status = "assigned";
       } else updates.status = "received";
-      let query = supabase.from("citizen_reports").update(updates).eq("id", report.id);
-      if (report.updated_at) query = query.eq("updated_at", report.updated_at);
-      const { data, error: saveError } = await query.select("*").single();
-      if (saveError) throw new Error(`${saveError.message}. If verification columns are missing, run citizen_reports_verification.sql first. Refresh if another admin updated this report.`);
-      mergeReport(data);
+      await saveReport(report, updates);
       // Database triggers record the reviewer and notify the citizen atomically.
-    } finally { setSavingReportId(null); }
+    } finally { setSavingId(null); }
   };
-
   const handleStatusChange = async (id, newStatus) => {
-    const report = reports.find((r) => r.id === id) || selectedReport;
-    if (!report || savingReportId || classifyingId || report.status === newStatus) return;
-    if (verificationOf(report) !== "verified" && newStatus !== "received") {
-      setError("Open report details and verify the report before assigning or progressing it."); return;
+    const report = reports.find(item => item.id === id) || selectedReport;
+    if (!report || savingId || report.status === newStatus) return;
+    if (!canProgress(report) && newStatus !== "received") {
+      setError("Open report details and verify this report before progressing it."); return;
     }
-    setSavingReportId(id);
-    setError("");
-    try {
-      let query = supabase.from("citizen_reports")
-        .update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", id);
-      if (report.updated_at) query = query.eq("updated_at", report.updated_at);
-      const { data, error: saveError } = await query.select("*").single();
-      if (saveError) throw saveError;
-      mergeReport(data);
-    } catch (err) { setError(err.message || "Status could not be saved. Refresh and try again."); }
-    finally { setSavingReportId(null); }
+    setSavingId(id); setError("");
+    try { await saveReport(report, {status: newStatus, updated_at: new Date().toISOString()}); }
+    catch (err) { setError(err.message); }
+    finally { setSavingId(null); }
   };
 
   const residentName = (report) =>
@@ -174,7 +121,7 @@ const CitizenReportsPage = () => {
   const filteredReports = reports
     .filter((report) => {
       if (verificationFilter !== "all" && verificationOf(report) !== verificationFilter) return false;
-      if (filter !== "all" && report.status !== filter) return false;
+      if (!matchesStatus(report, filter)) return false;
       if (severityFilter !== "all" && report.severity !== severityFilter) return false;
       const haystack = `${report.description || ""} ${residentName(report)} ${report.category || ""}`.toLowerCase();
       if (search && !haystack.includes(search.toLowerCase())) return false;
@@ -203,6 +150,21 @@ const CitizenReportsPage = () => {
     });
   };
 
+  const summaryCards = [
+    { label: "Total Reports", status: "all", severity: "all", color: "text-blue-600 dark:text-blue-400" },
+    { label: "High Priority", status: "outstanding", severity: "High", color: "text-red-600 dark:text-red-400" },
+    { label: "Awaiting Assignment", status: "received", severity: "all", color: "text-yellow-600 dark:text-yellow-400" },
+    { label: "In Progress", status: "active", severity: "all", color: "text-indigo-600 dark:text-indigo-400" },
+    { label: "Resolved", status: "resolved", severity: "all", color: "text-green-600 dark:text-green-400" },
+    { label: "Rejected", status: "rejected", severity: "all", color: "text-red-600 dark:text-red-400" },
+  ];
+  const selectSummary = (card) => {
+    setFilter(card.status);
+    setSeverityFilter(card.severity);
+    setVerificationFilter("all");
+    setSearch("");
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -216,13 +178,10 @@ const CitizenReportsPage = () => {
       </div>
 
       <label className="block text-sm font-medium">Verification
-        <select value={verificationFilter} onChange={(e) => setVerificationFilter(e.target.value)} className="ml-3 rounded border p-2 dark:bg-gray-800">
-          <option value="all">All reports</option>
-          <option value="pending">Pending verification</option>
-          <option value="verified">Verified</option>
-          <option value="needs_information">More information needed</option>
-          <option value="rejected">Rejected</option>
-        </select>
+        <span className="relative inline-block align-middle"><select value={verificationFilter} onChange={e=>setVerificationFilter(e.target.value)} className="cursor-pointer appearance-none pr-10 focus:ring-2 focus:ring-purple-500 rounded border p-2 dark:bg-gray-800">
+          <option value="all">All reports</option><option value="pending">Pending verification</option>
+          <option value="verified">Verified</option><option value="needs_information">More information needed</option><option value="rejected">Rejected</option>
+        </select><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-600 dark:text-gray-300"><path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
       </label>
       {error && (
         <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm px-4 py-3">
@@ -230,42 +189,23 @@ const CitizenReportsPage = () => {
         </div>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border dark:border-gray-700">
-          <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-            {reports.length}
-          </div>
-          <div className="text-sm text-gray-600 dark:text-gray-400">Total Reports</div>
-        </div>
-        <div
-          className="bg-white dark:bg-gray-800 rounded-xl p-4 border-2 border-red-300 dark:border-red-700 cursor-pointer"
-          onClick={() => setSeverityFilter("High")}
-          title="Click to filter to High priority reports"
-        >
-          <div className="text-2xl font-bold text-red-600 dark:text-red-400">
-            {reports.filter((r) => r.severity === "High").length}
-          </div>
-          <div className="text-sm text-gray-600 dark:text-gray-400">High Priority</div>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border dark:border-gray-700">
-          <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
-            {reports.filter((r) => r.status === "received").length}
-          </div>
-          <div className="text-sm text-gray-600 dark:text-gray-400">Awaiting Assignment</div>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border dark:border-gray-700">
-          <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-            {reports.filter((r) => r.status === "in_progress" || r.status === "assigned").length}
-          </div>
-          <div className="text-sm text-gray-600 dark:text-gray-400">In Progress</div>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border dark:border-gray-700">
-          <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-            {reports.filter((r) => r.status === "resolved" || r.status === "closed").length}
-          </div>
-          <div className="text-sm text-gray-600 dark:text-gray-400">Resolved</div>
-        </div>
+      {/* Summary cards use the same predicates for their counts and report filters. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
+        {summaryCards.map(card => {
+          const active = filter === card.status && severityFilter === card.severity && verificationFilter === "all" && search === "";
+          const count = reports.filter(report => matchesStatus(report, card.status) &&
+            (card.severity === "all" || report.severity === card.severity)).length;
+          return (
+            <button key={card.label} type="button" onClick={() => selectSummary(card)}
+              aria-pressed={active} title={`Show ${card.label.toLowerCase()}`}
+              className={`cursor-pointer rounded-xl border bg-white p-4 text-left transition hover:bg-purple-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 dark:bg-gray-800 dark:hover:bg-gray-700 ${active ? "border-purple-500 ring-2 ring-purple-200 dark:ring-purple-800" : "border-gray-200 dark:border-gray-700"}`}>
+              <div className={`text-2xl font-bold ${card.color}`}>{count}</div>
+              <div className="flex items-center justify-between gap-2 text-sm text-gray-600 dark:text-gray-400">
+                {card.label}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Filters and Search */}
@@ -276,33 +216,35 @@ const CitizenReportsPage = () => {
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Filter by Status
               </label>
-              <select
+              <span className="relative inline-block align-middle"><select
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white"
+                className="cursor-pointer appearance-none pr-10 focus:ring-2 focus:ring-purple-500 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white"
               >
                 <option value="all">All Reports</option>
-                {STATUS_OPTIONS.map((s) => (
+                <option value="outstanding">Awaiting action</option>
+                <option value="active">Assigned / In progress</option>
+                {["received", "assigned", "in_progress", "resolved", "rejected"].map((s) => (
                   <option key={s} value={s}>
                     {statusLabel(s)}
                   </option>
                 ))}
-              </select>
+              </select><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-600 dark:text-gray-300"><path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Filter by Severity
               </label>
-              <select
+              <span className="relative inline-block align-middle"><select
                 value={severityFilter}
                 onChange={(e) => setSeverityFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white"
+                className="cursor-pointer appearance-none pr-10 focus:ring-2 focus:ring-purple-500 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white"
               >
                 <option value="all">All Severities</option>
                 <option value="High">High Priority</option>
                 <option value="Medium">Medium Priority</option>
                 <option value="Low">Low Priority</option>
-              </select>
+              </select><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-600 dark:text-gray-300"><path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
               <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 max-w-[220px]">
                 Severity is AI-suggested — always confirm before acting.
               </p>
@@ -375,7 +317,7 @@ const CitizenReportsPage = () => {
                         colSpan={6}
                         className="px-6 py-2 bg-gray-100 dark:bg-gray-900 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400"
                       >
-                        Resolved / Closed
+                        Resolved / Rejected
                       </td>
                     </tr>
                   )}
@@ -419,8 +361,11 @@ const CitizenReportsPage = () => {
                   </td>
                   <td className="px-6 py-4">
                     <p className="mb-2 text-xs font-semibold">{verificationLabel(report)}</p>
+                    {reportStatus(report) === "rejected" ? (
+                      <span className="inline-flex rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800 dark:bg-red-900/30 dark:text-red-300">Rejected</span>
+                    ) : (
                     <select
-                      disabled={savingReportId !== null || classifyingId !== null || verificationOf(report) !== "verified"}
+                      disabled={savingId !== null || !canProgress(report)}
                       value={report.status || "received"}
                       onChange={(e) => handleStatusChange(report.id, e.target.value)}
                       className={`text-xs font-medium px-2 py-1 rounded-full border-0 focus:ring-2 focus:ring-offset-1 ${
@@ -434,6 +379,7 @@ const CitizenReportsPage = () => {
                         </option>
                       ))}
                     </select>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600 dark:text-gray-400">
                     {formatDate(report.created_at)}
@@ -449,7 +395,7 @@ const CitizenReportsPage = () => {
                       View
                     </button>
                     <button
-                      disabled={savingReportId !== null || classifyingId !== null || verificationOf(report) !== "verified"}
+                      disabled={savingId !== null || !canProgress(report)}
                       onClick={(e) => {
                         e.stopPropagation();
                         handleStatusChange(report.id, "resolved");
@@ -564,23 +510,20 @@ const CitizenReportsPage = () => {
                 )}
 
                 <section className="space-y-2 rounded-lg border p-4 dark:border-gray-700">
-                  <h3 className="font-semibold">AI photo assessment</h3>
-                  <p className="text-sm text-gray-500">Based on the first attached photo. These findings help review the report; they do not confirm authenticity.</p>
-                  <p className="text-sm">Suggested category: {selectedReport.ai_detected_image_category || "Not available"}</p>
-                  <p className="text-sm">Photo assessment: {selectedReport.ai_image_valid === true
-                    ? "Disaster-related content detected"
-                    : selectedReport.ai_image_valid === false
-                      ? "Photo flagged for admin review"
-                      : "Not available"}</p>
-                  {selectedReport.requires_manual_review && (
-                    <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">AI flagged this photo for manual review. Check the attachments before verifying.</p>
+                  <h3 className="font-semibold">AI assessment</h3>
+                  <p className="text-sm">Suggested priority: {selectedReport.ai_suggested_severity || selectedReport.severity || "Awaiting admin assessment"}</p>
+                  {selectedReport.ai_severity_confidence != null && (
+                    <p className="text-sm">Confidence: {Number(selectedReport.ai_severity_confidence).toFixed(1)}%</p>
+                  )}
+                  <p className="text-sm">Photo category: {selectedReport.ai_detected_image_category || "Not available"}</p>
+                  <p className="text-sm text-gray-500">Photo assessment uses the first attachment. AI suggestions require admin review.</p>
+                  {(selectedReport.requires_manual_review || selectedReport.ai_image_valid === false) && (
+                    <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">Photo flagged for manual review. Check the attachments before acting.</p>
                   )}
                 </section>
 
                 <ReportVerificationPanel key={selectedReport.id + ":" + selectedReport.updated_at}
-                  report={selectedReport} onReview={handleReview}
-                  busy={savingReportId !== null || classifyingId !== null} />
-
+                  report={selectedReport} onReview={handleReview} busy={savingId !== null} />
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -612,26 +555,6 @@ const CitizenReportsPage = () => {
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                       AI-suggested — requires human confirmation.
                     </p>
-                    {selectedReport.ai_suggested_severity && (
-                      <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
-                        AI suggestion: {selectedReport.ai_suggested_severity}
-                        {selectedReport.ai_severity_confidence != null &&
-                          ` (${Number(selectedReport.ai_severity_confidence).toFixed(1)}% confidence)`}
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      disabled={classifyingId !== null || savingReportId !== null || !selectedReport.description?.trim()}
-                      onClick={() => handleClassifySeverity(selectedReport)}
-                      className="mt-3 rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
-                    >
-                      {classifyingId === selectedReport.id ? "Classifying..." : "Auto-classify severity"}
-                    </button>
-                    {triageError?.reportId === selectedReport.id && (
-                      <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
-                        {triageError.message}
-                      </p>
-                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -639,9 +562,9 @@ const CitizenReportsPage = () => {
                     </label>
                     <p className="mt-1">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        statusColors[selectedReport.status] || statusColors.received
+                        statusColors[reportStatus(selectedReport)] || statusColors.received
                       }`}>
-                        {statusLabel(selectedReport.status)}
+                        {statusLabel(reportStatus(selectedReport))}
                       </span>
                     </p>
                   </div>
@@ -651,11 +574,13 @@ const CitizenReportsPage = () => {
                   <h4 className="font-medium text-gray-800 dark:text-white mb-2">
                     Update Report Status
                   </h4>
+                  <div className="relative inline-block min-w-48">
                   <select
-                    disabled={savingReportId !== null || classifyingId !== null || verificationOf(selectedReport) !== "verified"}
+                    aria-label="Update report status"
+                    disabled={savingId !== null || !canProgress(selectedReport)}
                     value={selectedReport.status || "received"}
                     onChange={(e) => handleStatusChange(selectedReport.id, e.target.value)}
-                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white"
+                    className="w-full cursor-pointer appearance-none pl-3 pr-10 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {STATUS_OPTIONS.map((s) => (
                       <option key={s} value={s}>
@@ -663,6 +588,11 @@ const CitizenReportsPage = () => {
                       </option>
                     ))}
                   </select>
+                    <svg aria-hidden="true" viewBox="0 0 20 20" fill="none"
+                      className="pointer-events-none absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-600 dark:text-gray-300">
+                      <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
                 </div>
 
                 <div className="flex justify-end space-x-3 pt-4 border-t dark:border-gray-700">
@@ -673,6 +603,7 @@ const CitizenReportsPage = () => {
                     Close
                   </button>
                   <button
+                    disabled={savingId !== null || !canProgress(selectedReport)}
                     onClick={() => {
                       handleStatusChange(selectedReport.id, "resolved");
                     }}

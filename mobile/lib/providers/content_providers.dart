@@ -959,18 +959,15 @@ class CitizenReport {
     );
   }
 
-  String get verificationMessage => switch (verificationStatus) {
-    'verified' => 'Your report has been checked by an administrator.',
-    'rejected' => 'Your report was rejected. Open the details to read the reason.',
-    'needs_information' => 'An administrator needs more information. Open the details for instructions.',
-    _ => 'Your report is awaiting administrator verification.',
-  };
-
   String get verificationLabel => switch (verificationStatus) {
-    'verified' => 'Verified',
-    'rejected' => 'Rejected',
-    'needs_information' => 'More information needed',
-    _ => 'Pending verification',
+    'verified' => 'Verified', 'rejected' => 'Rejected',
+    'needs_information' => 'More information needed', _ => 'Pending verification',
+  };
+  String get verificationMessage => switch (verificationStatus) {
+    'verified' => statusMessage,
+    'rejected' => 'Your report was rejected. Open the details for the reason.',
+    'needs_information' => 'More information is needed. Open the details for instructions.',
+    _ => 'Your report is awaiting administrator verification.',
   };
 
   /// Lower-cased and defaulted — unknown/legacy statuses fall back to

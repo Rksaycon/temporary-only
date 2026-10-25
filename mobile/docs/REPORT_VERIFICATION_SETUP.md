@@ -1,24 +1,21 @@
-# Report verification setup
+# Activate report verification
 
-1. In Supabase SQL Editor, run `supabase/citizen_reports_verification.sql`.
-   Prerequisites: the existing `schema.sql`, `admin_schema.sql` and
-   `citizen_reports_status_tracking.sql` must already be installed.
-   Do not rerun schema.sql against an existing database.
-2. Restart the admin dashboard and citizen app.
-3. Submit a test report. Confirm it is Pending verification, with AI urgency
-   visible only to admins. Unverified reports cannot be assigned or resolved.
-4. In admin report details, enter a final severity and choose Verify and assign.
-   Confirm citizen progress becomes Assigned and verification becomes Verified.
-5. Test Request more information and Reject report on separate pending reports.
-   Both require notes, which the citizen sees in report details and notifications.
-6. Confirm high-severity email descriptions say UNVERIFIED REPORT.
+Run `supabase/citizen_reports_verification.sql` in Supabase SQL Editor.
+It requires the existing admin_schema.sql (`is_admin()`) and
+citizen_reports_status_tracking.sql (citizen notifications) to be installed.
+Do not rerun schema.sql against an existing database.
 
-The review table records the admin identity, time, decision, note and severity.
-Existing assigned/in-progress/completed reports are preserved as verified;
-this backfill does not invent a reviewer or historical review time.
-The migration enforces verification before progress, in addition to UI checks.
-Apply this migration before publishing the updated admin page. SQL has not been
-executed against the hosted database from this workspace.
+The migration has not been executed against the hosted database by this session.
+Until applied, verification saves will fail. Apply it before publishing the admin.
+Existing assigned/in-progress/completed reports are retained as verified without
+inventing a historical reviewer. New reports start pending.
 
-Request more information sends instructions; it does not add an in-app chat or
-edit/resubmission form. Include your office contact method in the request.
+Check with a test resident/admin:
+- Submit a high-severity report. It remains pending and cannot progress.
+- Verify with a final severity: it becomes assigned, with reviewer and time recorded.
+- Reject another pending report with a reason: the citizen sees feedback.
+- Request information on another report: the citizen receives instructions.
+- Immediate high-severity email descriptions are prefixed UNVERIFIED REPORT.
+
+Information requests are notifications and feedback, not a chat or report-editing
+feature. Include an office contact method in the instructions.

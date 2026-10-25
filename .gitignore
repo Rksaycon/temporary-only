@@ -7,3 +7,6 @@ app.env
 *.keystore
 key.properties
 local.properties
+
+# Generated Kotlin compiler sessions
+.kotlin/

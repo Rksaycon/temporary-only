@@ -82,10 +82,6 @@ cd may_laud
 # Install dependencies
 flutter pub get
 
-# Create the required configuration asset, then fill in your Supabase values
-# in app.env (PowerShell on Windows):
-Copy-Item .env.example app.env
-
 # Run the application
 flutter run
 ```

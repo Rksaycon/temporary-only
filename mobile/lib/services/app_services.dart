@@ -302,8 +302,7 @@ class CitizenReportService {
   // indirection entirely (the screen's own category list doesn't even
   // match fetchReportCategories()' set, so the id lookup was never going
   // to be reliable).
-  // Severity is classified at submission for admin review. Citizens do not
-  // choose a level or see the AI result in the report form.
+  // Classify submitted reports automatically and save findings for admins.
   Future<Map<String, dynamic>> submitReport({
     required String category,
     required String subcategory,
@@ -311,13 +310,6 @@ class CitizenReportService {
     required String location,
     List<ReportPhoto>? photoFiles,
     String? contactInfo,
-    String? priority,
-    // Optional precomputed result for callers that already classified a report.
-    SeverityResult? severityResult,
-    // 'Emergency' | 'Minor Concern' — forwarded to the AI backend when it
-    // has to run classifySeverity() itself below (severityResult wasn't
-    // already provided). Matches api.py's report_type field, which
-    // forces 'Low' severity outright for 'Minor Concern'.
     String? reportType,
   }) async {
     final uid = SupabaseService.userId;
@@ -344,10 +336,9 @@ class CitizenReportService {
     // AI TRIAGE — severity classification + image verification. Both are
     // best-effort: a null result (backend down, network issue, etc.) just
     // leaves severity unassigned for admin review and skips unavailable
-    // image fields. Classification failure must never reject a submission.
+    // photo findings. AI failure must never reject a submission.
     final ai = AiTriageService();
-    final severity = severityResult ??
-        await ai.classifySeverity(description,
+    final severity = await ai.classifySeverity(description,
             reportType: reportType, category: category);
 
     ImageVerificationResult? imageResult;
@@ -358,7 +349,7 @@ class CitizenReportService {
       );
     }
 
-    final finalPriority = priority ?? severity?.toPriorityLevel();
+    final finalPriority = severity?.toPriorityLevel();
     final requiresReview = imageResult != null &&
         (!imageResult.isValidPhoto || imageResult.requiresManualReview);
 

@@ -433,17 +433,13 @@ class _ReportCard extends StatelessWidget {
               SizedBox(height: 16.h),
               Text(report.verificationLabel,
                   style: TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w700, color: color)),
-              SizedBox(height: 6.h),
-              Text(report.verificationMessage,
-                  style: TextStyle(fontSize: 12.sp, color: colors.textSecondary)),
               if (report.verificationStatus != 'rejected')
                 _MiniTimeline(report: report, color: color, colors: colors),
               SizedBox(height: 8.h),
               // Current-stage caption so the bar is readable at a glance —
               // same sentence the push notification uses.
               Text(
-                report.verificationStatus == 'verified'
-                    ? report.statusMessage : '',
+                report.verificationMessage,
                 style:
                     TextStyle(fontSize: 12.sp, color: color, height: 1.3),
               ),
@@ -574,8 +570,7 @@ class ReportHistoryDetailScreen extends ConsumerWidget {
           ),
           SizedBox(height: 14.h),
           Text(
-            current.verificationStatus == 'verified'
-                ? current.statusMessage : current.verificationMessage,
+            current.verificationMessage,
             style: TextStyle(
                 fontSize: 13.sp, color: colors.textSecondary, height: 1.4),
           ),
@@ -645,11 +640,9 @@ class ReportHistoryDetailScreen extends ConsumerWidget {
           if (current.description.isNotEmpty)
             _infoRow(colors, Icons.notes_rounded, 'Description',
                 current.description),
-          _infoRow(colors, Icons.fact_check_outlined, 'Verification',
-              current.verificationLabel),
+          _infoRow(colors, Icons.fact_check_outlined, 'Verification', current.verificationLabel),
           if (current.verificationNote.isNotEmpty)
-            _infoRow(colors, Icons.comment_outlined, 'Admin feedback',
-                current.verificationNote),
+            _infoRow(colors, Icons.comment_outlined, 'Admin feedback', current.verificationNote),
           _infoRow(colors, Icons.schedule_rounded, 'Submitted',
               current.submittedLabel),
           _infoRow(colors, Icons.update_rounded, 'Last Updated',
