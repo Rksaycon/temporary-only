@@ -24,5 +24,11 @@ ml_test_images/
 simulation_results/
 web/public/ml-tests/
 
+# Keep the temporary repository limited to the client applications
+/backend/
+/docs/
+/tools/
+/README.md
+
 # Generated Kotlin compiler sessions
 .kotlin/
