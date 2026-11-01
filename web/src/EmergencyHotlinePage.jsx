@@ -57,8 +57,11 @@ const EmergencyHotlinePage = () => {
   }, []);
 
   useEffect(() => {
-    fetchHotlines();
-    fetchFloodAlerts();
+    const timer = window.setTimeout(() => {
+      fetchHotlines();
+      fetchFloodAlerts();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [fetchHotlines, fetchFloodAlerts]);
 
   // The mobile app's HotlineService only ever selects `name` + `is_active`,
@@ -157,6 +160,14 @@ const EmergencyHotlinePage = () => {
   };
 
   const activeAlerts = floodAlerts.filter((a) => a.is_active);
+  const missingCriticalHotlineTypes = ["Fire", "Medical"].filter(
+    (type) => !hotlines.some(
+      (hotline) =>
+        hotline.is_active &&
+        String(hotline.type || "").toLowerCase() === type.toLowerCase() &&
+        String(hotline.number || hotline.phone || "").trim(),
+    ),
+  );
 
   return (
     <div className="space-y-6">
@@ -188,6 +199,14 @@ const EmergencyHotlinePage = () => {
       {hotlineSchemaNote && (
         <div className="rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 text-yellow-800 dark:text-yellow-300 text-sm px-4 py-3">
           {hotlineSchemaNote}
+        </div>
+      )}
+      {!hotlinesLoading && missingCriticalHotlineTypes.length > 0 && (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+          <p className="font-bold">Emergency calling setup is incomplete</p>
+          <p className="mt-1">
+            Add and activate a verified {missingCriticalHotlineTypes.join(" and ")} number. Until then, Fire and Medical report screens will direct users and admins to Unified 911.
+          </p>
         </div>
       )}
 
@@ -329,9 +348,15 @@ const EmergencyHotlinePage = () => {
                 </div>
               </div>
               <div className="flex items-center space-x-3">
-                <div className="text-xl font-bold text-red-600 dark:text-red-400">
-                  {hotline.number || hotline.phone || ""}
-                </div>
+                {(hotline.number || hotline.phone) && (
+                  <a
+                    href={`tel:${String(hotline.number || hotline.phone).replace(/[^0-9+]/g, "")}`}
+                    className="text-xl font-bold text-red-600 hover:underline dark:text-red-400"
+                    title="Test this number in the phone dialer"
+                  >
+                    {hotline.number || hotline.phone}
+                  </a>
+                )}
                 <button
                   onClick={() => handleToggleHotline(hotline.id, hotline.is_active)}
                   className="text-xs px-2 py-1 border rounded-lg dark:border-gray-600 text-gray-600 dark:text-gray-300"

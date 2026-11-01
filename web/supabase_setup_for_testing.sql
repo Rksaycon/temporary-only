@@ -21,6 +21,8 @@ create table if not exists public.citizen_reports (
   photo_urls    text[] default '{}',
   contact       text,
   status        text not null default 'received',
+  assigned_department text,
+  assigned_at   timestamptz,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
   -- AI triage columns (same as supabase_add_ai_triage_columns.sql)

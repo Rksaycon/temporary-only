@@ -3,6 +3,15 @@ export const verificationOf = (report) => report.verification_status ||
 export const verificationLabel = (report) => ({pending: "Pending verification", verified: "Verified", needs_information: "More information needed", rejected: "Rejected"})[verificationOf(report)] || "Pending verification";
 export const canProgress = (report) => verificationOf(report) === "verified";
 
+export const workflowLabel = (report) => ({
+  received: "New",
+  assigned: "Acknowledged",
+  in_progress: "Action ongoing",
+  resolved: "Resolved",
+  closed: "Resolved",
+  rejected: "Rejected",
+})[reportStatus(report)] || "New";
+
 // Rejection is a verification decision; existing closed reports remain resolved.
 export const reportStatus = (report) => verificationOf(report) === "rejected"
   ? "rejected" : report.status === "closed" ? "resolved" : report.status || "received";

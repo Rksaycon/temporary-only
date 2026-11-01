@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+saved_model/
+vision_models/
+.codex-backup-*/

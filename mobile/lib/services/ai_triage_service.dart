@@ -64,9 +64,28 @@ class SeverityResult {
 }
 
 class ImageVerificationResult {
+  // The last working mobile/API flow treated the classifier's own top
+  // disaster confidence as the validity signal. Its deployed threshold was
+  // raised to 90% specifically to reject closed-set guesses on unrelated
+  // photos while still accepting clear disaster evidence.
+  static const double legacyDisasterConfidenceThreshold = 90.0;
+  static const double medicalConfidenceThreshold = 75.0;
+  // Do not offer the citizen Medical/Road Accident confirmation below the
+  // externally tested 65% safety gate. Lower scores remain admin-only evidence.
+  static const double medicalCandidateConfidenceThreshold = 65.0;
+  static const double medicalSinglePhotoConfidenceThreshold = 90.0;
+  static const double infrastructureConfidenceThreshold = 65.0;
+  static const double validityAutoSelectThreshold = 85.0;
+
   final bool isValidPhoto;
-  final String? detectedCategory; // 'Fire' | 'Flooding' | 'Earthquake' | 'Landslide'
+  final String? detectedCategory;
   final bool requiresManualReview;
+  final bool autoSelectAllowed;
+  final bool? matchesReportedCategory;
+  final double validityModelConfidence;
+  final double categoryConfidence;
+  final bool dominantFaceDetected;
+  final String? reviewReason;
   // The backend's own human-readable verdict (e.g. "⚠️ Photo doesn't
   // look like a disaster report photo. Needs manual review.", or the
   // selfie/mismatch-specific wording) — reused as-is in the UI instead
@@ -78,15 +97,163 @@ class ImageVerificationResult {
     required this.isValidPhoto,
     this.detectedCategory,
     required this.requiresManualReview,
+    required this.autoSelectAllowed,
+    this.matchesReportedCategory,
+    required this.validityModelConfidence,
+    required this.categoryConfidence,
+    required this.dominantFaceDetected,
+    this.reviewReason,
     this.verdict,
   });
+
+  double get categoryAcceptanceThreshold {
+    switch (detectedCategory) {
+      case 'Medical Emergency':
+        return medicalConfidenceThreshold;
+      case 'Infrastructure Damage':
+        return infrastructureConfidenceThreshold;
+      case 'Fire':
+      case 'Flooding':
+      default:
+        return legacyDisasterConfidenceThreshold;
+    }
+  }
+
+  // Restore the original validity gate before trusting any category. The
+  // deployed backend currently bypasses this 85% gate in its Medical and
+  // Infrastructure branches, so the client must enforce it consistently.
+  bool get passesValidityGate =>
+      isValidPhoto &&
+      autoSelectAllowed &&
+      validityModelConfidence >= validityAutoSelectThreshold;
+
+  // A photo may be valid emergency evidence even when its category confidence
+  // is not strong enough to auto-select by itself. This narrower gate is used
+  // only when several photos of the same incident corroborate one another.
+  bool get passesIncidentEvidenceGate =>
+      isValidPhoto &&
+      validityModelConfidence >= validityAutoSelectThreshold &&
+      !dominantFaceDetected;
+
+  bool get isLegacyAutoCategory =>
+      detectedCategory == 'Fire' || detectedCategory == 'Flooding';
+
+  /// Medical includes visible medical emergencies and road crashes. It uses
+  /// its own detector because the older validity model was trained mainly for
+  /// Fire/Flood evidence. This is only candidate evidence: the report screen
+  /// still requires stronger single-photo evidence or two corroborating views,
+  /// followed by an explicit citizen confirmation.
+  bool get hasGuardedMedicalEvidence =>
+      detectedCategory == 'Medical Emergency' &&
+      isValidPhoto &&
+      categoryConfidence >= medicalCandidateConfidenceThreshold;
+
+  bool get hasTrustedCategory =>
+      detectedCategory != null &&
+      isLegacyAutoCategory &&
+      passesValidityGate &&
+      categoryConfidence >= categoryAcceptanceThreshold &&
+      !dominantFaceDetected;
 
   factory ImageVerificationResult.fromJson(Map<String, dynamic> json) {
     return ImageVerificationResult(
       isValidPhoto: json['is_valid_report_photo'] ?? false,
       detectedCategory: json['detected_disaster_category'] as String?,
       requiresManualReview: json['requires_human_review'] ?? true,
+      autoSelectAllowed: json['auto_select_allowed'] ?? false,
+      matchesReportedCategory: json['matches_report'] as bool?,
+      validityModelConfidence:
+          (json['validity_model_probability'] as num?)?.toDouble() ?? 0,
+      categoryConfidence:
+          (json['disaster_confidence'] as num?)?.toDouble() ?? 0,
+      dominantFaceDetected: json['dominant_face_detected'] ?? false,
+      reviewReason: json['review_reason'] as String?,
       verdict: json['verdict'] as String?,
+    );
+  }
+}
+
+class IncidentContextAssessment {
+  final bool available;
+  final String incidentStatus;
+  final String category;
+  final String evidenceStrength;
+  final String summary;
+  final String lookalikeReason;
+  final bool needsMorePhotos;
+  final bool emergencyCallRecommended;
+  final List<String> visibleEvidence;
+  final List<String> authenticityConcerns;
+
+  const IncidentContextAssessment({
+    required this.available,
+    required this.incidentStatus,
+    required this.category,
+    required this.evidenceStrength,
+    required this.summary,
+    required this.lookalikeReason,
+    required this.needsMorePhotos,
+    required this.emergencyCallRecommended,
+    required this.visibleEvidence,
+    required this.authenticityConcerns,
+  });
+
+  factory IncidentContextAssessment.fromJson(Map<String, dynamic> json) {
+    List<String> strings(String key) =>
+        (json[key] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<String>()
+            .toList(growable: false);
+
+    return IncidentContextAssessment(
+      available: json['available'] == true,
+      incidentStatus:
+          json['incident_status'] as String? ?? 'insufficient_evidence',
+      category: json['category'] as String? ?? 'Unclear',
+      evidenceStrength: json['evidence_strength'] as String? ?? 'weak',
+      summary: json['summary'] as String? ?? '',
+      lookalikeReason: json['lookalike_reason'] as String? ?? '',
+      needsMorePhotos: json['needs_more_photos'] == true,
+      emergencyCallRecommended: json['emergency_call_recommended'] == true,
+      visibleEvidence: strings('visible_evidence'),
+      authenticityConcerns: strings('authenticity_concerns'),
+    );
+  }
+}
+
+class IncidentVerificationResult {
+  final List<ImageVerificationResult> photoResults;
+  final IncidentContextAssessment context;
+  final String decision;
+  final String? suggestedCategory;
+  final bool autoSelectAllowed;
+  final bool requiresHumanReview;
+  final String reason;
+
+  const IncidentVerificationResult({
+    required this.photoResults,
+    required this.context,
+    required this.decision,
+    this.suggestedCategory,
+    required this.autoSelectAllowed,
+    required this.requiresHumanReview,
+    required this.reason,
+  });
+
+  factory IncidentVerificationResult.fromJson(Map<String, dynamic> json) {
+    final rawPhotos = json['photo_results'] as List<dynamic>? ?? const [];
+    final rawContext =
+        json['context_assessment'] as Map<String, dynamic>? ?? const {};
+    return IncidentVerificationResult(
+      photoResults: rawPhotos
+          .whereType<Map<String, dynamic>>()
+          .map(ImageVerificationResult.fromJson)
+          .toList(growable: false),
+      context: IncidentContextAssessment.fromJson(rawContext),
+      decision: json['decision'] as String? ?? 'ml_only',
+      suggestedCategory: json['suggested_category'] as String?,
+      autoSelectAllowed: json['auto_select_allowed'] == true,
+      requiresHumanReview: json['requires_human_review'] != false,
+      reason: json['reason'] as String? ?? '',
     );
   }
 }
@@ -201,12 +368,56 @@ class AiTriageService {
         options: Options(receiveTimeout: const Duration(seconds: 20)),
       );
       if (response.statusCode == 200) {
-        return ImageVerificationResult.fromJson(response.data as Map<String, dynamic>);
+        return ImageVerificationResult.fromJson(
+            response.data as Map<String, dynamic>);
       }
       return null;
     } catch (e) {
       // ignore: avoid_print
       print('AiTriageService.verifyImage error: $e');
+      return null;
+    }
+  }
+
+  /// Checks one to three photos together as one incident. The backend first
+  /// runs the existing local ML models, then (when configured) applies a
+  /// multimodal context check for harmless look-alikes. Null means the new
+  /// endpoint is unavailable, so callers should retain the legacy per-photo
+  /// fallback.
+  Future<IncidentVerificationResult?> verifyIncident(
+    List<Uint8List> photoBytes, {
+    required List<String> filenames,
+    String? description,
+  }) async {
+    if (photoBytes.isEmpty || photoBytes.length != filenames.length) {
+      return null;
+    }
+    try {
+      final files = <MultipartFile>[
+        for (var index = 0; index < photoBytes.length && index < 3; index++)
+          MultipartFile.fromBytes(
+            photoBytes[index],
+            filename: filenames[index],
+          ),
+      ];
+      final response = await _dio.post(
+        '/verify-incident',
+        data: FormData.fromMap({
+          'files': files,
+          if (description != null && description.trim().isNotEmpty)
+            'description': description.trim(),
+        }),
+        options: Options(receiveTimeout: const Duration(seconds: 50)),
+      );
+      if (response.statusCode == 200) {
+        return IncidentVerificationResult.fromJson(
+          response.data as Map<String, dynamic>,
+        );
+      }
+      return null;
+    } catch (e) {
+      // ignore: avoid_print
+      print('AiTriageService.verifyIncident error: $e');
       return null;
     }
   }

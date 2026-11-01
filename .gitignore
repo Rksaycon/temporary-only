@@ -7,6 +7,22 @@ app.env
 *.keystore
 key.properties
 local.properties
+*.log
+
+# Generated dependency and build output
+**/.npm-cache/
+**/.dart_tool/
+**/build/
+**/dist/
+**/coverage/
+**/__pycache__/
+*.py[cod]
+
+# Local test, simulation, and rendered media artifacts
+demo-video/
+ml_test_images/
+simulation_results/
+web/public/ml-tests/
 
 # Generated Kotlin compiler sessions
 .kotlin/

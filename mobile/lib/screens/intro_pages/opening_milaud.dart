@@ -1,16 +1,18 @@
 import 'package:may_laud/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:may_laud/providers/auth_provider.dart';
 import 'package:may_laud/screens/intro_pages/intro_page_design.dart';
 
-class OpeningScreen extends StatefulWidget {
+class OpeningScreen extends ConsumerStatefulWidget {
   const OpeningScreen({super.key});
 
   @override
-  State<OpeningScreen> createState() => _OpeningScreenState();
+  ConsumerState<OpeningScreen> createState() => _OpeningScreenState();
 }
 
-class _OpeningScreenState extends State<OpeningScreen>
+class _OpeningScreenState extends ConsumerState<OpeningScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fadeAnim;
@@ -53,11 +55,24 @@ class _OpeningScreenState extends State<OpeningScreen>
 
     if (!mounted) return;
 
+    // A cold start can restore the Supabase token immediately but still need
+    // a moment to fetch the resident's profile. Do not make a routing decision
+    // until AuthProvider has completed that work.
+    while (mounted && ref.read(authProvider).isLoading) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    if (!mounted || isNavigated) return;
+    isNavigated = true;
+
+    final authState = ref.read(authProvider);
+    if (authState.isAuthenticated && !authState.isGuest) {
+      Navigator.pushReplacementNamed(context, '/main');
+      return;
+    }
+
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(
-        builder: (_) => const OnboardingScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const OnboardingScreen()),
     );
   }
 

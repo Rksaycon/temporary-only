@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
 import { useTheme } from "./ThemeContext";
 import { useAuth } from "./AuthContext";
@@ -42,48 +42,66 @@ function useRealtimeConnectionStatus() {
 function useAdminAlerts() {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const fetchingRef = useRef(false);
 
   const fetchAlerts = useCallback(async () => {
-    const [{ data: reports }, { data: requests }] = await Promise.all([
-      supabase
-        .from("citizen_reports")
-        .select("id, category, subcategory, description, created_at")
-        .eq("status", "received")
-        .order("created_at", { ascending: false })
-        .limit(10),
-      supabase
-        .from("document_requests")
-        .select("id, document_type, created_at")
-        .eq("status", "pending")
-        .order("created_at", { ascending: false })
-        .limit(10),
-    ]);
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+    try {
+      const [{ data: reports }, { data: requests }] = await Promise.all([
+        supabase
+          .from("citizen_reports")
+          .select("id, category, subcategory, description, created_at")
+          .eq("status", "received")
+          .order("created_at", { ascending: false })
+          .limit(10),
+        supabase
+          .from("document_requests")
+          .select("id, document_type, created_at")
+          .eq("status", "pending")
+          .order("created_at", { ascending: false })
+          .limit(10),
+      ]);
 
-    const combined = [
-      ...(reports || []).map((r) => ({
-        id: `report-${r.id}`,
-        kind: "report",
-        title: "New citizen report",
-        detail: r.subcategory || r.category || "Awaiting assignment",
-        createdAt: r.created_at,
-        link: "/citizen-reports",
-      })),
-      ...(requests || []).map((r) => ({
-        id: `request-${r.id}`,
-        kind: "request",
-        title: "New document request",
-        detail: r.document_type || "Awaiting review",
-        createdAt: r.created_at,
-        link: "/document-requests",
-      })),
-    ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const combined = [
+        ...(reports || []).map((r) => ({
+          id: `report-${r.id}`,
+          kind: "report",
+          title: "New citizen report",
+          detail: r.subcategory || r.category || "Awaiting assignment",
+          createdAt: r.created_at,
+          link: `/citizen-reports?report=${encodeURIComponent(r.id)}`,
+        })),
+        ...(requests || []).map((r) => ({
+          id: `request-${r.id}`,
+          kind: "request",
+          title: "New document request",
+          detail: r.document_type || "Awaiting review",
+          createdAt: r.created_at,
+          link: "/document-requests",
+        })),
+      ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    setAlerts(combined);
-    setLoading(false);
+      setAlerts(combined);
+    } catch (error) {
+      console.error("Could not refresh admin alerts:", error);
+    } finally {
+      fetchingRef.current = false;
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     fetchAlerts();
+
+    // Realtime is the fast path; polling and focus refresh recover updates
+    // missed during disconnects or when database Realtime is unavailable.
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") fetchAlerts();
+    };
+    const refreshTimer = window.setInterval(refreshWhenVisible, 15000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     const channel = supabase
       .channel("admin-alerts")
@@ -91,9 +109,14 @@ function useAdminAlerts() {
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "citizen_reports" }, fetchAlerts)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "document_requests" }, fetchAlerts)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "document_requests" }, fetchAlerts)
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") fetchAlerts();
+      });
 
     return () => {
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
       supabase.removeChannel(channel);
     };
   }, [fetchAlerts]);

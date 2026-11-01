@@ -19,6 +19,21 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// CameraX 1.5 references CallbackToFutureAdapter from AndroidX Concurrent,
+// but the camera plugin's generated compile classpath can omit that artifact
+// with this project's newer Gradle/Guava resolution. Add it only to the camera
+// plugin instead of changing dependencies for every module.
+subprojects {
+    if (name == "camera_android_camerax") {
+        pluginManager.withPlugin("com.android.library") {
+            dependencies.add(
+                "implementation",
+                "androidx.concurrent:concurrent-futures:1.2.0",
+            )
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

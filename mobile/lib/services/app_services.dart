@@ -16,6 +16,192 @@ class ReportPhoto {
   const ReportPhoto({required this.bytes, required this.filename});
 }
 
+class ReportPhotoAssessment {
+  final int checkedPhotoCount;
+  final String reportedCategory;
+  final String? suggestedCategory;
+  final String? acceptedCategory;
+  final bool hasTrustedMatch;
+  final bool hasTrustedMismatch;
+  final bool hasConflictingResults;
+  final bool aiUnavailable;
+  final bool forceManualReview;
+
+  const ReportPhotoAssessment({
+    required this.checkedPhotoCount,
+    required this.reportedCategory,
+    this.suggestedCategory,
+    this.acceptedCategory,
+    required this.hasTrustedMatch,
+    required this.hasTrustedMismatch,
+    required this.hasConflictingResults,
+    required this.aiUnavailable,
+    this.forceManualReview = false,
+  });
+
+  bool get requiresManualReview =>
+      aiUnavailable ||
+      forceManualReview ||
+      !hasTrustedMatch ||
+      hasTrustedMismatch ||
+      hasConflictingResults;
+
+  bool get hasTrustedEvidence => acceptedCategory != null || hasTrustedMismatch;
+}
+
+class ReportCategorySuggestion {
+  final int checkedPhotoCount;
+  final String? suggestedCategory;
+  final double? suggestedConfidence;
+  final int supportingPhotoCount;
+  final bool hasConflictingResults;
+  final bool aiUnavailable;
+  final List<ImageVerificationResult> results;
+  final bool contextAvailable;
+  final String contextDecision;
+  final String? contextSuggestedCategory;
+  final String? contextSummary;
+  final bool contextNeedsMorePhotos;
+  final bool emergencyCallRecommended;
+
+  const ReportCategorySuggestion({
+    required this.checkedPhotoCount,
+    this.suggestedCategory,
+    this.suggestedConfidence,
+    this.supportingPhotoCount = 0,
+    required this.hasConflictingResults,
+    required this.aiUnavailable,
+    required this.results,
+    this.contextAvailable = false,
+    this.contextDecision = 'ml_only',
+    this.contextSuggestedCategory,
+    this.contextSummary,
+    this.contextNeedsMorePhotos = false,
+    this.emergencyCallRecommended = false,
+  });
+
+  bool get hasTrustedEvidence => suggestedCategory != null;
+
+  bool get allPhotosRejectedForAutomaticCategory =>
+      results.isNotEmpty &&
+      results.every((result) =>
+          !result.hasTrustedCategory && !result.hasGuardedMedicalEvidence);
+}
+
+/// A short, structured safety check for Medical Emergency / Road Accident.
+///
+/// The text severity model can misread short or misspelled reports and
+/// negation such as "walang nasaktan". These answers therefore provide the
+/// citizen-facing priority suggestion for this category. The barangay still
+/// makes the official severity decision during review.
+enum AccidentTriageDecision {
+  injuryOrImmediateDanger,
+  notSure,
+  noInjuryRoadBlocked,
+  noInjuryRoadClear,
+}
+
+extension AccidentTriageDecisionDetails on AccidentTriageDecision {
+  String get suggestedSeverity {
+    switch (this) {
+      case AccidentTriageDecision.injuryOrImmediateDanger:
+        return 'High';
+      case AccidentTriageDecision.notSure:
+      case AccidentTriageDecision.noInjuryRoadBlocked:
+        return 'Medium';
+      case AccidentTriageDecision.noInjuryRoadClear:
+        return 'Low';
+    }
+  }
+
+  String get summary {
+    switch (this) {
+      case AccidentTriageDecision.injuryOrImmediateDanger:
+        return 'Citizen reports an injury or immediate danger.';
+      case AccidentTriageDecision.notSure:
+        return 'Citizen is not sure whether anyone is injured or in danger.';
+      case AccidentTriageDecision.noInjuryRoadBlocked:
+        return 'No injury reported, but the road is blocked or unsafe.';
+      case AccidentTriageDecision.noInjuryRoadClear:
+        return 'No injury reported and the road is clear.';
+    }
+  }
+
+  String get reportNote =>
+      'Accident safety check: $summary Suggested priority: $suggestedSeverity. '
+      'Barangay verification required.';
+}
+
+/// Structured secondary evidence for a photo-supported Fire report.
+enum FireTriageDecision {
+  peopleOrStructuresInDanger,
+  notSure,
+  activeUncontrolledFire,
+  controlledOrNoActiveDanger,
+}
+
+extension FireTriageDecisionDetails on FireTriageDecision {
+  String get suggestedSeverity {
+    switch (this) {
+      case FireTriageDecision.peopleOrStructuresInDanger:
+        return 'High';
+      case FireTriageDecision.notSure:
+      case FireTriageDecision.activeUncontrolledFire:
+        return 'Medium';
+      case FireTriageDecision.controlledOrNoActiveDanger:
+        return 'Low';
+    }
+  }
+
+  String get summary {
+    switch (this) {
+      case FireTriageDecision.peopleOrStructuresInDanger:
+        return 'Citizen reports people or structures in immediate danger, or a spreading fire.';
+      case FireTriageDecision.notSure:
+        return 'Citizen is not sure whether the fire is spreading or threatening anyone.';
+      case FireTriageDecision.activeUncontrolledFire:
+        return 'Citizen reports an active, uncontrolled fire without a known immediate life threat.';
+      case FireTriageDecision.controlledOrNoActiveDanger:
+        return 'Citizen reports a controlled fire or no active danger.';
+    }
+  }
+
+  String get reportNote =>
+      'Fire safety check: $summary Suggested priority: $suggestedSeverity. '
+      'Barangay verification required.';
+}
+
+/// Conservative acceptance policy for Medical Emergency / Road Accident.
+/// A medium-confidence single image may be offered to the citizen as a
+/// possible Medical/Road Accident report, but it is never selected without
+/// explicit confirmation. When several views are attached, two independent
+/// photos must support the same incident unless one view is already very
+/// strong. Admin review remains mandatory after citizen confirmation.
+class MedicalCategoryGuard {
+  const MedicalCategoryGuard._();
+
+  static List<ImageVerificationResult> supportingResults(
+    List<ImageVerificationResult> results,
+  ) =>
+      results
+          .where((result) => result.hasGuardedMedicalEvidence)
+          .toList(growable: false);
+
+  static bool qualifies(
+    List<ImageVerificationResult> results, {
+    required int attachedPhotoCount,
+  }) {
+    final supporting = supportingResults(results);
+    if (attachedPhotoCount <= 1) {
+      return supporting.length == 1;
+    }
+    return supporting.length >= 2 ||
+        supporting.any((result) =>
+            result.categoryConfidence >=
+            ImageVerificationResult.medicalSinglePhotoConfidenceThreshold);
+  }
+}
+
 class AnnouncementService {
   final Ref ref;
   AnnouncementService(this.ref);
@@ -238,6 +424,220 @@ class FloodAlertService {
 }
 
 class CitizenReportService {
+  static const int maxAnalyzedPhotos = 3;
+  static const double _incidentAcceptanceThreshold = 90.0;
+
+  /// Runs the admin-only text severity model after the citizen has finished
+  /// writing the report. The screen may use this result to decide whether a
+  /// short-message fallback question is necessary, without displaying the
+  /// severity to the citizen.
+  Future<SeverityResult?> classifyReportSeverity({
+    required String description,
+    required String reportType,
+    required String category,
+  }) =>
+      AiTriageService().classifySeverity(
+        description,
+        reportType: reportType,
+        category: category,
+      );
+
+  // Combine corroborating photos conservatively. The strongest photo keeps
+  // its full score; every additional matching photo can only reduce half of
+  // the remaining uncertainty. This rewards independent evidence without
+  // simply adding percentages or allowing several weak guesses to reach 100%.
+  double _combinedIncidentConfidence(List<double> confidences) {
+    if (confidences.isEmpty) return 0;
+    final ordered = List<double>.of(confidences)
+      ..sort((a, b) => b.compareTo(a));
+    var combined = ordered.first.clamp(0.0, 100.0);
+    for (final confidence in ordered.skip(1)) {
+      final support = confidence.clamp(0.0, 100.0) / 100.0;
+      combined += (100.0 - combined) * support * 0.5;
+    }
+    return combined.clamp(0.0, 99.9);
+  }
+
+  /// Analyzes the photos before the citizen chooses a category. The model's
+  /// result is only a suggestion: the citizen can correct it, and the admin
+  /// still receives both values for verification.
+  Future<ReportCategorySuggestion> suggestReportCategory({
+    required List<ReportPhoto> photos,
+  }) async {
+    final checkedPhotos = photos.take(maxAnalyzedPhotos).toList();
+    if (checkedPhotos.isEmpty) {
+      return const ReportCategorySuggestion(
+        checkedPhotoCount: 0,
+        hasConflictingResults: false,
+        aiUnavailable: false,
+        results: <ImageVerificationResult>[],
+      );
+    }
+
+    final ai = AiTriageService();
+    final results = <ImageVerificationResult>[];
+
+    // Prefer one incident-level request so all attached views can be checked
+    // together for context (for example, a normal river versus actual road
+    // inundation). The endpoint still returns every local ML result. If it is
+    // not deployed yet, the legacy per-photo flow below remains available.
+    final incident = await ai.verifyIncident(
+      [for (final photo in checkedPhotos) photo.bytes],
+      filenames: [for (final photo in checkedPhotos) photo.filename],
+    );
+    if (incident != null) {
+      results.addAll(incident.photoResults);
+    }
+
+    if (incident?.context.available == true) {
+      final context = incident!.context;
+      var autoCategory =
+          incident.autoSelectAllowed ? incident.suggestedCategory : null;
+      if (autoCategory == 'Medical Emergency' &&
+          !MedicalCategoryGuard.qualifies(
+            results,
+            attachedPhotoCount: checkedPhotos.length,
+          )) {
+        autoCategory = null;
+      }
+      final supportingCount = autoCategory == null
+          ? 0
+          : autoCategory == 'Medical Emergency'
+              ? MedicalCategoryGuard.supportingResults(results).length
+              : results
+                  .where((result) =>
+                      result.isValidPhoto &&
+                      result.detectedCategory == autoCategory)
+                  .length;
+      return ReportCategorySuggestion(
+        checkedPhotoCount: checkedPhotos.length,
+        suggestedCategory: autoCategory,
+        supportingPhotoCount: supportingCount,
+        hasConflictingResults: incident.decision == 'possible_emergency',
+        aiUnavailable: false,
+        results: List<ImageVerificationResult>.unmodifiable(results),
+        contextAvailable: true,
+        contextDecision: incident.decision,
+        contextSuggestedCategory: incident.suggestedCategory,
+        contextSummary:
+            incident.reason.isNotEmpty ? incident.reason : context.summary,
+        contextNeedsMorePhotos: context.needsMorePhotos,
+        emergencyCallRecommended: context.emergencyCallRecommended,
+      );
+    }
+
+    // Keep these sequential so several attachments do not overload the free
+    // inference service. Passing no reported category keeps the photo result
+    // independent from the citizen's later choice.
+    if (results.isEmpty) {
+      for (final photo in checkedPhotos) {
+        final result = await ai.verifyImage(
+          photo.bytes,
+          filename: photo.filename,
+          reportedCategory: null,
+        );
+        if (result != null) results.add(result);
+      }
+    }
+
+    // Never aggregate the classifier's closed-set raw guess. Fire/Flood still
+    // require the calibrated legacy validity gate. Medical/Road Accident uses
+    // its specialized detector, then the stricter MedicalCategoryGuard below.
+    final evidenceByCategory = <String, List<double>>{};
+    for (final result in results) {
+      final category = result.detectedCategory;
+      final contributes = result.hasTrustedCategory ||
+          (category == 'Medical Emergency' && result.hasGuardedMedicalEvidence);
+      if (category == null || !contributes) {
+        continue;
+      }
+      evidenceByCategory
+          .putIfAbsent(category, () => <double>[])
+          .add(result.categoryConfidence);
+    }
+
+    final combinedByCategory = <String, double>{
+      for (final entry in evidenceByCategory.entries)
+        entry.key: _combinedIncidentConfidence(entry.value),
+    };
+    final hasConflicts = evidenceByCategory.length > 1;
+    String? suggestedCategory;
+    double? suggestedConfidence;
+    var supportingPhotoCount = 0;
+
+    if (!hasConflicts && combinedByCategory.length == 1) {
+      final entry = combinedByCategory.entries.first;
+      final qualifies = entry.key == 'Medical Emergency'
+          ? MedicalCategoryGuard.qualifies(
+              results,
+              attachedPhotoCount: checkedPhotos.length,
+            )
+          : entry.value >= _incidentAcceptanceThreshold;
+      if (qualifies) {
+        suggestedCategory = entry.key;
+        suggestedConfidence = entry.value;
+        supportingPhotoCount = evidenceByCategory[entry.key]!.length;
+      }
+    }
+
+    return ReportCategorySuggestion(
+      checkedPhotoCount: checkedPhotos.length,
+      suggestedCategory: suggestedCategory,
+      suggestedConfidence: suggestedConfidence,
+      supportingPhotoCount: supportingPhotoCount,
+      hasConflictingResults: hasConflicts,
+      aiUnavailable: results.length != checkedPhotos.length,
+      results: List<ImageVerificationResult>.unmodifiable(results),
+      contextAvailable: false,
+      contextDecision: incident?.decision ?? 'ml_only',
+      contextSummary: incident?.reason,
+    );
+  }
+
+  ReportPhotoAssessment assessmentFromSuggestion({
+    required ReportCategorySuggestion suggestion,
+    required String category,
+  }) {
+    final normalizedReported = category.trim().toLowerCase();
+    final trustedCategory = suggestion.suggestedCategory;
+    final reviewCategory =
+        trustedCategory ?? suggestion.contextSuggestedCategory;
+    final hasMatch = trustedCategory != null &&
+        trustedCategory.trim().toLowerCase() == normalizedReported;
+    final hasMismatch = trustedCategory != null && !hasMatch;
+    final hasConflicts = suggestion.hasConflictingResults;
+    final acceptedCategory = hasMatch && !hasConflicts ? trustedCategory : null;
+
+    return ReportPhotoAssessment(
+      checkedPhotoCount: suggestion.checkedPhotoCount,
+      reportedCategory: category,
+      suggestedCategory: reviewCategory,
+      acceptedCategory: acceptedCategory,
+      hasTrustedMatch: hasMatch,
+      hasTrustedMismatch: hasMismatch,
+      hasConflictingResults: hasConflicts,
+      aiUnavailable: suggestion.aiUnavailable,
+      // The specialized Medical detector includes road crashes and bypasses
+      // the old Fire/Flood validity model. Citizen confirmation makes it a
+      // usable report category, but an admin must still verify it officially.
+      forceManualReview: trustedCategory == 'Medical Emergency',
+    );
+  }
+
+  Future<ReportPhotoAssessment?> assessReportPhotos({
+    required List<ReportPhoto> photos,
+    required String category,
+    required String? reportType,
+  }) async {
+    if (reportType == 'Minor Concern' || photos.isEmpty) return null;
+
+    final suggestion = await suggestReportCategory(photos: photos);
+    return assessmentFromSuggestion(
+      suggestion: suggestion,
+      category: category,
+    );
+  }
+
   Future<List<Map<String, dynamic>>> fetchReportCategories() async {
     return [
       {
@@ -311,6 +711,11 @@ class CitizenReportService {
     List<ReportPhoto>? photoFiles,
     String? contactInfo,
     String? reportType,
+    ReportPhotoAssessment? photoAssessment,
+    AccidentTriageDecision? accidentTriageDecision,
+    FireTriageDecision? fireTriageDecision,
+    SeverityResult? preclassifiedSeverity,
+    bool severityClassificationAttempted = false,
   }) async {
     final uid = SupabaseService.userId;
     if (uid == null) throw Exception('Not logged in');
@@ -338,20 +743,41 @@ class CitizenReportService {
     // leaves severity unassigned for admin review and skips unavailable
     // photo findings. AI failure must never reject a submission.
     final ai = AiTriageService();
-    final severity = await ai.classifySeverity(description,
+    final severity = severityClassificationAttempted
+        ? preclassifiedSeverity
+        : await ai.classifySeverity(description,
             reportType: reportType, category: category);
 
-    ImageVerificationResult? imageResult;
-    if (photoFiles != null && photoFiles.isNotEmpty) {
-      imageResult = await ai.verifyImage(
-        photoFiles.first.bytes,
-        filename: photoFiles.first.filename,
-      );
-    }
+    final assessment = photoAssessment ??
+        await assessReportPhotos(
+          photos: photoFiles ?? const <ReportPhoto>[],
+          category: category,
+          reportType: reportType,
+        );
 
-    final finalPriority = severity?.toPriorityLevel();
-    final requiresReview = imageResult != null &&
-        (!imageResult.isValidPhoto || imageResult.requiresManualReview);
+    // A structured accident answer is safer than the free-text model for
+    // short messages and negation. Do not attach a fake confidence percentage
+    // to this deterministic decision.
+    final structuredSeverity = accidentTriageDecision?.suggestedSeverity ??
+        fireTriageDecision?.suggestedSeverity;
+    final structuredNote =
+        accidentTriageDecision?.reportNote ?? fireTriageDecision?.reportNote;
+    // Text ML is the normal decision for a sufficiently detailed message.
+    // A structured answer exists only when the message was too short or
+    // unclear, so in that case it becomes the fallback severity.
+    final finalPriority = structuredSeverity ?? severity?.toPriorityLevel();
+    final storedDescription = structuredNote == null
+        ? description
+        : '$description\n\n$structuredNote';
+    // Keep a trusted independent suggestion even when it differs from the
+    // citizen's category. The web admin uses that difference as a review
+    // signal; it never replaces the citizen or official classification.
+    final trustedImageSuggestion = assessment?.suggestedCategory;
+    // An emergency submitted without usable photo evidence must remain in
+    // the admin's manual-review queue. Routine concerns do not use the
+    // four-class emergency image model.
+    final requiresReview =
+        assessment?.requiresManualReview ?? reportType == 'Emergency';
 
     final row = await SupabaseService.client
         .from('citizen_reports')
@@ -359,15 +785,18 @@ class CitizenReportService {
           'user_id': uid,
           'category': category,
           'subcategory': subcategory,
-          'description': description,
+          'description': storedDescription,
           'location': location,
           'photo_urls': photoUrls,
           'contact': contactInfo,
           'severity': finalPriority,
-          'ai_suggested_severity': severity?.severity,
-          'ai_severity_confidence': severity?.confidence,
-          'ai_detected_image_category': imageResult?.detectedCategory,
-          'ai_image_valid': imageResult?.isValidPhoto,
+          'ai_suggested_severity': structuredSeverity ?? severity?.severity,
+          'ai_severity_confidence':
+              structuredSeverity == null ? severity?.confidence : null,
+          // Never persist the classifier's forced guess for an invalid,
+          // unrelated, or low-confidence image.
+          'ai_detected_image_category': trustedImageSuggestion,
+          'ai_image_valid': assessment?.hasTrustedEvidence,
           'requires_manual_review': requiresReview,
         })
         .select()
@@ -382,7 +811,8 @@ class CitizenReportService {
       unawaited(ai.notifyHighSeverityIncident(
         category: category,
         severity: finalPriority!,
-        description: '[UNVERIFIED REPORT - admin verification required] $description',
+        description:
+            '[UNVERIFIED REPORT - admin verification required] $storedDescription',
         location: location,
         imageUrl: photoUrls.isNotEmpty ? photoUrls.first : null,
       ));
@@ -392,17 +822,8 @@ class CitizenReportService {
       'reportId': row['id'],
       'status': 'received',
       'submittedAt': row['created_at'],
-      // FIX — the caller reads `result['assignedTo']` to show which
-      // department the report went to. That key never existed here, so
-      // `result['assignedTo'] as String` threw a null-cast TypeError on
-      // *every* successful submission, which the screen's catch block
-      // then showed to the resident as "Something went wrong. Please try
-      // again." — even though the report had already been saved. Residents
-      // saw a failure message every time and had no way to know the
-      // report actually went through.
-      'assignedTo': '$category Department',
-      'estimatedResolution': '3-5 business days',
-      'message': 'Thank you! Your report has been received.',
+      'storedDescription': storedDescription,
+      'message': 'Your report was received and is awaiting LGU review.',
     };
   }
 

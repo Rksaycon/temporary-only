@@ -8,6 +8,7 @@ import 'package:may_laud/core/performance_optimization.dart';
 import 'package:may_laud/firebase_options.dart';
 import 'package:may_laud/providers/app_providers.dart';
 import 'package:may_laud/providers/app_theme_provider.dart';
+import 'package:may_laud/providers/auth_provider.dart';
 import 'package:may_laud/providers/content_providers.dart';
 import 'package:may_laud/screens/app_features/document/document_tracking_screen.dart';
 import 'package:may_laud/screens/app_features/document/document_request_modal.dart';
@@ -270,7 +271,13 @@ class _MyAppState extends ConsumerState<MyApp> {
           // bounced to the opening screen over a color change — the selected
           // bottom-nav tab lives in bottomNavProvider, above this subtree, so
           // it survives too.
-          initialRoute: themeRevision == 0 ? '/' : '/main',
+          // A theme update must not bypass the startup auth gate for a signed-
+          // out user. Only an already authenticated resident can be remounted
+          // directly into the app shell.
+          initialRoute: themeRevision != 0 &&
+                  ref.read(authProvider).isAuthenticated
+              ? '/main'
+              : '/',
           routes: {
             '/': (context) => const OpeningScreen(),
             '/main': (context) => const MainApp(),

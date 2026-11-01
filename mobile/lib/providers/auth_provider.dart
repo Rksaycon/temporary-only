@@ -87,8 +87,13 @@ class AuthState {
 }
 
 class AuthProvider extends StateNotifier<AuthState> {
-  AuthProvider(this._ref) : super(const AuthState()) {
-    _checkAuthStatus();
+  AuthProvider(this._ref) : super(const AuthState(isLoading: true)) {
+    // Supabase.initialize() restores the persisted refresh token before the
+    // widget tree is created. Keep auth in a loading state while we turn that
+    // restored session into the app's User model; otherwise the opening screen
+    // can briefly see "not authenticated" and send a signed-in resident back
+    // to Login on every cold start.
+    unawaited(_checkAuthStatus());
   }
 
   final Ref _ref;
@@ -116,9 +121,12 @@ class AuthProvider extends StateNotifier<AuthState> {
       final session = _client.auth.currentSession;
       if (session != null) {
         await _loadProfile(session.user.id, session.user.email ?? '');
+      } else {
+        state = const AuthState(isLoading: false);
       }
     } catch (e) {
       debugPrint('[AuthProvider] _checkAuthStatus skipped: $e');
+      state = const AuthState(isLoading: false);
     }
   }
 

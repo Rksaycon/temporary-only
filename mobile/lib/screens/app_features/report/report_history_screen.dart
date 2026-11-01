@@ -12,6 +12,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:intl/intl.dart';
 
 import 'package:may_laud/providers/content_providers.dart';
 import 'package:may_laud/theme/app_colors.dart';
@@ -80,7 +81,12 @@ class _ReportHistoryScreenState extends ConsumerState<ReportHistoryScreen> {
     // resident's current reports (and attaches the realtime channel for
     // whoever is signed in now), even after a login/logout without restart.
     Future.microtask(
-      () => ref.read(citizenReportsProvider.notifier).fetchReports(),
+      () async {
+        await Future.wait([
+          ref.read(citizenReportsProvider.notifier).fetchReports(),
+          ref.read(notificationsProvider.notifier).fetchNotifications(),
+        ]);
+      },
     );
   }
 
@@ -236,9 +242,7 @@ class _ReportHistoryScreenState extends ConsumerState<ReportHistoryScreen> {
               'Statuses update automatically — no need to refresh. You will '
               'also get a notification when a report is reviewed or solved.',
               style: TextStyle(
-                  fontSize: 12.5.sp,
-                  color: colors.textSecondary,
-                  height: 1.35),
+                  fontSize: 12.5.sp, color: colors.textSecondary, height: 1.35),
             ),
           ),
         ],
@@ -432,7 +436,10 @@ class _ReportCard extends StatelessWidget {
               ),
               SizedBox(height: 16.h),
               Text(report.verificationLabel,
-                  style: TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w700, color: color)),
+                  style: TextStyle(
+                      fontSize: 12.sp,
+                      fontWeight: FontWeight.w700,
+                      color: color)),
               if (report.verificationStatus != 'rejected')
                 _MiniTimeline(report: report, color: color, colors: colors),
               SizedBox(height: 8.h),
@@ -440,8 +447,7 @@ class _ReportCard extends StatelessWidget {
               // same sentence the push notification uses.
               Text(
                 report.verificationMessage,
-                style:
-                    TextStyle(fontSize: 12.sp, color: color, height: 1.3),
+                style: TextStyle(fontSize: 12.sp, color: color, height: 1.3),
               ),
               SizedBox(height: 12.h),
               Row(
@@ -507,11 +513,61 @@ class ReportHistoryDetailScreen extends ConsumerWidget {
         padding: EdgeInsets.fromLTRB(20.w, 16.h, 20.w, 32.h),
         children: [
           _buildStatusHero(colors, current, color),
+          if (current.citizenMessage.isNotEmpty) ...[
+            SizedBox(height: 16.h),
+            _buildBarangayMessageCard(colors, current),
+          ],
           SizedBox(height: 16.h),
           if (current.verificationStatus != 'rejected')
             _buildProgressCard(colors, current, color),
           SizedBox(height: 16.h),
           _buildDetailsCard(colors, current),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBarangayMessageCard(
+      AppColorScheme colors, CitizenReport report) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(20.w),
+      decoration: BoxDecoration(
+        color: AppColors.infoAlt.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(color: AppColors.infoAlt.withValues(alpha: .22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.mark_chat_unread_outlined,
+                  size: 20.sp, color: AppColors.infoAlt),
+              SizedBox(width: 9.w),
+              Text(
+                'MESSAGE FROM BARANGAY',
+                style: TextStyle(
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w700,
+                    color: colors.textPrimary,
+                    letterSpacing: .5),
+              ),
+            ],
+          ),
+          SizedBox(height: 12.h),
+          Text(
+            report.citizenMessage,
+            style: TextStyle(
+                fontSize: 14.sp, color: colors.textPrimary, height: 1.4),
+          ),
+          if (report.citizenMessageSentAt != null) ...[
+            SizedBox(height: 4.h),
+            Text(
+              'Sent ${DateFormat('MMM dd, yyyy • hh:mm a').format(report.citizenMessageSentAt!.toLocal())}',
+              style: TextStyle(fontSize: 11.5.sp, color: colors.textMuted),
+            ),
+          ],
         ],
       ),
     );
@@ -635,14 +691,15 @@ class ReportHistoryDetailScreen extends ConsumerWidget {
           _infoRow(
               colors, Icons.category_rounded, 'Category', current.category),
           if (current.location.isNotEmpty)
-            _infoRow(
-                colors, Icons.place_rounded, 'Location', current.location),
+            _infoRow(colors, Icons.place_rounded, 'Location', current.location),
           if (current.description.isNotEmpty)
             _infoRow(colors, Icons.notes_rounded, 'Description',
                 current.description),
-          _infoRow(colors, Icons.fact_check_outlined, 'Verification', current.verificationLabel),
+          _infoRow(colors, Icons.fact_check_outlined, 'Verification',
+              current.verificationLabel),
           if (current.verificationNote.isNotEmpty)
-            _infoRow(colors, Icons.comment_outlined, 'Admin feedback', current.verificationNote),
+            _infoRow(colors, Icons.comment_outlined, 'Admin feedback',
+                current.verificationNote),
           _infoRow(colors, Icons.schedule_rounded, 'Submitted',
               current.submittedLabel),
           _infoRow(colors, Icons.update_rounded, 'Last Updated',
@@ -655,8 +712,8 @@ class ReportHistoryDetailScreen extends ConsumerWidget {
 
   /// One row of the vertical timeline — icon + label, dimmed until the
   /// report reaches that stage.
-  Widget _verticalStep(AppColorScheme colors, CitizenReport current,
-      Color color, int i) {
+  Widget _verticalStep(
+      AppColorScheme colors, CitizenReport current, Color color, int i) {
     final done = i <= current.timelineStep;
     final stepColor = done ? color : colors.textMuted;
     final isLast = i == _kTimelineLabels.length - 1;
@@ -692,17 +749,15 @@ class ReportHistoryDetailScreen extends ConsumerWidget {
             Text(
               'Current',
               style: TextStyle(
-                  fontSize: 11.5.sp,
-                  fontWeight: FontWeight.w600,
-                  color: color),
+                  fontSize: 11.5.sp, fontWeight: FontWeight.w600, color: color),
             ),
         ],
       ),
     );
   }
 
-  Widget _infoRow(AppColorScheme colors, IconData icon, String label,
-      String value,
+  Widget _infoRow(
+      AppColorScheme colors, IconData icon, String label, String value,
       {bool last = false}) {
     return Padding(
       padding: EdgeInsets.only(bottom: last ? 0 : 16.h),
@@ -748,9 +803,3 @@ class ReportHistoryDetailScreen extends ConsumerWidget {
     );
   }
 }
-
-
-
-
-
-

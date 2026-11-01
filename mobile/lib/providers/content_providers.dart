@@ -26,15 +26,14 @@ class Announcement {
     this.isRead = false,
   });
 
-  String get formattedDate =>
-      DateFormat('MMM dd, yyyy • hh:mm a').format(date);
+  String get formattedDate => DateFormat('MMM dd, yyyy • hh:mm a').format(date);
 
   factory Announcement.fromJson(Map<String, dynamic> json) {
     return Announcement(
-      id:          json['id'] ?? '',
-      title:       json['title'] ?? '',
+      id: json['id'] ?? '',
+      title: json['title'] ?? '',
       description: json['description'] ?? '',
-      category:    json['category'] ?? 'General',
+      category: json['category'] ?? 'General',
       // FIX — Supabase returns created_at in UTC (e.g. "...T07:00:00Z").
       // DateTime.parse keeps that as a UTC-flagged DateTime, and
       // formatting it directly shows the raw UTC clock time instead of
@@ -42,25 +41,25 @@ class Announcement {
       // Philippine time (UTC+8) was showing as 7:00 AM in the app.
       // .toLocal() converts it to the device's local timezone before
       // it's ever formatted.
-      date:        json['created_at'] != null
-                     ? DateTime.parse(json['created_at']).toLocal()
-                     : DateTime.now(),
-      imageUrl:    json['image_url'],
+      date: json['created_at'] != null
+          ? DateTime.parse(json['created_at']).toLocal()
+          : DateTime.now(),
+      imageUrl: json['image_url'],
       isImportant: json['is_important'] ?? false,
-      isRead:      json['is_read'] ?? false,
+      isRead: json['is_read'] ?? false,
     );
   }
 
   Announcement copyWith({bool? isRead}) {
     return Announcement(
-      id:          id,
-      title:       title,
+      id: id,
+      title: title,
       description: description,
-      category:    category,
-      date:        date,
-      imageUrl:    imageUrl,
+      category: category,
+      date: date,
+      imageUrl: imageUrl,
       isImportant: isImportant,
-      isRead:      isRead ?? this.isRead,
+      isRead: isRead ?? this.isRead,
     );
   }
 }
@@ -87,36 +86,36 @@ class AppNotification {
   String get formattedTime {
     final diff = DateTime.now().difference(timestamp);
     if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inHours   < 1) return '${diff.inMinutes}m ago';
-    if (diff.inDays    < 1) return '${diff.inHours}h ago';
-    if (diff.inDays    < 7) return '${diff.inDays}d ago';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
     return DateFormat('MMM dd').format(timestamp);
   }
 
   factory AppNotification.fromJson(Map<String, dynamic> json) {
     return AppNotification(
-      id:        json['id'] ?? '',
-      title:     json['title'] ?? '',
-      message:   json['message'] ?? '',
+      id: json['id'] ?? '',
+      title: json['title'] ?? '',
+      message: json['message'] ?? '',
       timestamp: json['created_at'] != null
-                   ? DateTime.parse(json['created_at'])
-                   : DateTime.now(),
-      type:      json['type'] ?? 'system',
-      isRead:    json['is_read'] ?? false,
-      data:      json['data'],
+          ? DateTime.parse(json['created_at'])
+          : DateTime.now(),
+      type: json['type'] ?? 'system',
+      isRead: json['is_read'] ?? false,
+      data: json['data'],
     );
   }
 
   // FIX #8 — add missing copyWith
   AppNotification copyWith({bool? isRead}) {
     return AppNotification(
-      id:        id,
-      title:     title,
-      message:   message,
+      id: id,
+      title: title,
+      message: message,
       timestamp: timestamp,
-      type:      type,
-      isRead:    isRead ?? this.isRead,
-      data:      data,
+      type: type,
+      isRead: isRead ?? this.isRead,
+      data: data,
     );
   }
 }
@@ -162,8 +161,7 @@ class AnnouncementsProvider extends StateNotifier<List<Announcement>> {
         final a = Announcement.fromJson(payload.newRecord);
         // Guard against duplicates if a manual fetch raced the event.
         if (state.any((e) => e.id == a.id)) return;
-        state = [a, ...state]
-          ..sort((x, y) => y.date.compareTo(x.date));
+        state = [a, ...state]..sort((x, y) => y.date.compareTo(x.date));
         break;
       case PostgresChangeEvent.update:
         final updated = Announcement.fromJson(payload.newRecord);
@@ -221,12 +219,13 @@ class AnnouncementsProvider extends StateNotifier<List<Announcement>> {
     if (uid == null) return;
 
     await _client.from('announcement_reads').upsert({
-      'user_id':         uid,
+      'user_id': uid,
       'announcement_id': id,
     });
 
     // FIX #1 — use copyWith instead of mutating isRead directly
-    state = state.map((a) => a.id == id ? a.copyWith(isRead: true) : a).toList();
+    state =
+        state.map((a) => a.id == id ? a.copyWith(isRead: true) : a).toList();
   }
 
   Future<void> markAllAsRead() async {
@@ -236,7 +235,7 @@ class AnnouncementsProvider extends StateNotifier<List<Announcement>> {
     final unread = state.where((a) => !a.isRead).toList();
     for (final a in unread) {
       await _client.from('announcement_reads').upsert({
-        'user_id':         uid,
+        'user_id': uid,
         'announcement_id': a.id,
       });
     }
@@ -397,7 +396,8 @@ class NotificationsProvider extends StateNotifier<List<AppNotification>> {
         .eq('user_id', uid);
 
     // FIX #1 — use copyWith instead of mutating n.isRead directly
-    state = state.map((n) => n.id == id ? n.copyWith(isRead: true) : n).toList();
+    state =
+        state.map((n) => n.id == id ? n.copyWith(isRead: true) : n).toList();
   }
 
   Future<void> markAllAsRead() async {
@@ -406,8 +406,7 @@ class NotificationsProvider extends StateNotifier<List<AppNotification>> {
 
     await _client
         .from('notifications')
-        .update({'is_read': true})
-        .eq('user_id', uid);
+        .update({'is_read': true}).eq('user_id', uid);
 
     // FIX #1 — use copyWith instead of mutating
     state = state.map((n) => n.copyWith(isRead: true)).toList();
@@ -455,7 +454,7 @@ final importantAnnouncementsProvider = Provider<List<Announcement>>((ref) {
 });
 
 // ─────────────────────────────────────────────────────────
-// DOCUMENT REQUESTS 
+// DOCUMENT REQUESTS
 // ─────────────────────────────────────────────────────────
 /// A picked attachment's raw bytes plus its filename. Bytes rather than a
 /// `dart:io File` so the snapshot keeps working on Flutter web, where `File`
@@ -470,9 +469,11 @@ class DocumentRequest {
   final String id;
   final String documentType;
   final String purpose;
-  final String status; // 'pending' | 'processing' | 'ready' | 'released' | 'rejected'
+  final String
+      status; // 'pending' | 'processing' | 'ready' | 'released' | 'rejected'
   final String? fee;
   final String? notes;
+
   /// Everything the resident typed on the request form. Persisted so the web
   /// admin sees the same details the resident submitted (see
   /// supabase/document_requests_full_details.sql).
@@ -480,6 +481,7 @@ class DocumentRequest {
   final String? address;
   final String? urgency;
   final String? additionalNotes;
+
   /// Public URLs of the supporting documents uploaded with the request.
   final List<String> attachmentUrls;
   final DateTime createdAt;
@@ -503,26 +505,26 @@ class DocumentRequest {
 
   factory DocumentRequest.fromJson(Map<String, dynamic> json) {
     return DocumentRequest(
-      id:              json['id']?.toString() ?? '',
-      documentType:    json['document_type'] ?? '',
-      purpose:         json['purpose'] ?? '',
-      status:          json['status'] ?? 'pending',
-      fee:             json['fee'],
-      notes:           json['notes'],
-      fullName:        json['full_name'],
-      address:         json['address'],
-      urgency:         json['urgency'],
+      id: json['id']?.toString() ?? '',
+      documentType: json['document_type'] ?? '',
+      purpose: json['purpose'] ?? '',
+      status: json['status'] ?? 'pending',
+      fee: json['fee'],
+      notes: json['notes'],
+      fullName: json['full_name'],
+      address: json['address'],
+      urgency: json['urgency'],
       additionalNotes: json['additional_notes'],
-      attachmentUrls:  (json['attachment_urls'] as List?)
-                           ?.map((e) => e.toString())
-                           .toList() ??
-                       const [],
-      createdAt:       json['created_at'] != null
-                           ? DateTime.parse(json['created_at'])
-                           : DateTime.now(),
-      updatedAt:       json['updated_at'] != null
-                           ? DateTime.parse(json['updated_at'])
-                           : null,
+      attachmentUrls: (json['attachment_urls'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      createdAt: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
+          : DateTime.now(),
+      updatedAt: json['updated_at'] != null
+          ? DateTime.parse(json['updated_at'])
+          : null,
     );
   }
 
@@ -785,11 +787,11 @@ class DocumentRequestsProvider extends StateNotifier<List<DocumentRequest>> {
     }
 
     final details = <String, dynamic>{
-      'full_name':        fullName?.trim(),
-      'address':          address?.trim(),
-      'urgency':          urgency,
+      'full_name': fullName?.trim(),
+      'address': address?.trim(),
+      'urgency': urgency,
       'additional_notes': additionalNotes?.trim(),
-      'attachment_urls':  attachmentUrls,
+      'attachment_urls': attachmentUrls,
     };
 
     try {
@@ -842,12 +844,12 @@ class DocumentRequestsProvider extends StateNotifier<List<DocumentRequest>> {
     String? fee,
   }) async {
     final base = <String, dynamic>{
-      'user_id':       uid,
+      'user_id': uid,
       'document_type': documentType,
-      'purpose':       purpose,
-      'status':        'pending',
+      'purpose': purpose,
+      'status': 'pending',
       if (fee != null) 'fee': fee,
-      'notes':         'Urgency: $urgency',
+      'notes': 'Urgency: $urgency',
     };
 
     try {
@@ -876,13 +878,12 @@ final documentRequestStatsProvider = Provider<Map<String, int>>((ref) {
   return {
     'total': requests.length,
     'approved': requests
-        .where((r) =>
-            const {'ready', 'released', 'completed'}
-                .contains(r.normalizedStatus))
+        .where((r) => const {'ready', 'released', 'completed'}
+            .contains(r.normalizedStatus))
         .length,
     'pending': requests
-        .where((r) =>
-            const {'pending', 'processing'}.contains(r.normalizedStatus))
+        .where(
+            (r) => const {'pending', 'processing'}.contains(r.normalizedStatus))
         .length,
   };
 });
@@ -908,7 +909,10 @@ class CitizenReport {
   final String status; // received | assigned | in_progress | resolved | closed
   final String verificationStatus;
   final String verificationNote;
+  final String citizenMessage;
+  final DateTime? citizenMessageSentAt;
   final bool requiresManualReview;
+  final String assignedDepartment;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -924,7 +928,10 @@ class CitizenReport {
     this.status = 'received',
     this.verificationStatus = 'pending',
     this.verificationNote = '',
+    this.citizenMessage = '',
+    this.citizenMessageSentAt,
     this.requiresManualReview = false,
+    this.assignedDepartment = '',
     required this.createdAt,
     required this.updatedAt,
   });
@@ -946,10 +953,17 @@ class CitizenReport {
       severity: json['severity']?.toString() ?? '',
       status: json['status']?.toString() ?? 'received',
       verificationStatus: json['verification_status']?.toString() ??
-          (['assigned', 'in_progress', 'resolved', 'closed'].contains(json['status'])
-              ? 'verified' : 'pending'),
+          (['assigned', 'in_progress', 'resolved', 'closed']
+                  .contains(json['status'])
+              ? 'verified'
+              : 'pending'),
       verificationNote: json['verification_note']?.toString() ?? '',
+      citizenMessage: json['citizen_message']?.toString() ?? '',
+      citizenMessageSentAt: json['citizen_message_sent_at'] != null
+          ? DateTime.parse(json['citizen_message_sent_at'] as String)
+          : null,
       requiresManualReview: json['requires_manual_review'] == true,
+      assignedDepartment: json['assigned_department']?.toString() ?? '',
       // Supabase returns timestamps in UTC — kept as parsed and converted to
       // local at format time (same convention as Announcement.fromJson).
       createdAt: createdAt,
@@ -960,15 +974,19 @@ class CitizenReport {
   }
 
   String get verificationLabel => switch (verificationStatus) {
-    'verified' => 'Verified', 'rejected' => 'Rejected',
-    'needs_information' => 'More information needed', _ => 'Pending verification',
-  };
+        'verified' => 'Verified',
+        'rejected' => 'Rejected',
+        'needs_information' => 'More information needed',
+        _ => 'Pending verification',
+      };
   String get verificationMessage => switch (verificationStatus) {
-    'verified' => statusMessage,
-    'rejected' => 'Your report was rejected. Open the details for the reason.',
-    'needs_information' => 'More information is needed. Open the details for instructions.',
-    _ => 'Your report is awaiting administrator verification.',
-  };
+        'verified' => statusMessage,
+        'rejected' =>
+          'Your report was rejected. Open the details for the reason.',
+        'needs_information' =>
+          'More information is needed. Open the details for instructions.',
+        _ => 'Your report is awaiting administrator verification.',
+      };
 
   /// Lower-cased and defaulted — unknown/legacy statuses fall back to
   /// 'received' so nothing downstream has to null-check.
@@ -1004,9 +1022,13 @@ class CitizenReport {
   String get statusMessage {
     switch (normalizedStatus) {
       case 'assigned':
-        return 'Your report has been assigned to a department for action.';
+        return assignedDepartment.trim().isEmpty
+            ? 'Your report was routed internally to an LGU office. This does not confirm emergency-service dispatch.'
+            : 'Routed internally to $assignedDepartment. This does not confirm emergency-service dispatch.';
       case 'in_progress':
-        return 'Ongoing — the department is currently working on your report.';
+        return assignedDepartment.trim().isEmpty
+            ? 'The LGU marked this case as in progress.'
+            : 'The LGU marked this case as in progress with $assignedDepartment.';
       case 'resolved':
         return 'Solved! Your report has been resolved.';
       case 'closed':
@@ -1062,7 +1084,6 @@ class CitizenReport {
   String get displayTitle =>
       subcategory.trim().isEmpty ? category : subcategory.trim();
 }
-
 
 class CitizenReportsProvider extends StateNotifier<List<CitizenReport>> {
   CitizenReportsProvider() : super(const []) {
@@ -1288,10 +1309,8 @@ class DashboardStatsNotifier extends StateNotifier<DashboardStats> {
 
   Future<int> _activeProjectsCount() async {
     try {
-      final rows = await _client
-          .from('projects')
-          .select('id')
-          .eq('status', 'active');
+      final rows =
+          await _client.from('projects').select('id').eq('status', 'active');
       return (rows as List).length;
     } catch (_) {
       return 0;

@@ -32,6 +32,9 @@ alter table public.citizen_reports replica identity full;
 -- is safe. The history screen surfaces "Last Updated" from this.
 alter table public.citizen_reports
   add column if not exists updated_at timestamptz not null default now();
+alter table public.citizen_reports
+  add column if not exists assigned_department text,
+  add column if not exists assigned_at timestamptz;
 
 -- Keep updated_at accurate whenever an admin changes the status from the web
 -- dashboard (same helper document_requests already uses).
@@ -78,8 +81,10 @@ declare
   ref_label text;
   old_label text;
   new_label text;
+  notification_message text;
 begin
-  if old.status is not distinct from new.status then
+  if old.status is not distinct from new.status
+     and old.assigned_department is not distinct from new.assigned_department then
     return new;
   end if;
 
@@ -89,18 +94,26 @@ begin
   old_label  := public.citizen_reports_status_label(old.status);
   new_label  := public.citizen_reports_status_label(new.status);
 
+  if new.status = 'assigned' and nullif(trim(new.assigned_department), '') is not null then
+    notification_message := 'Your report ' || ref_label || ' was routed internally to '
+      || new.assigned_department || '. This does not confirm emergency-service dispatch.';
+  else
+    notification_message := 'Your report ' || ref_label || ' moved from '
+      || old_label || ' to ' || new_label || '.';
+  end if;
+
   insert into public.notifications (user_id, title, message, type, data)
   values (
     new.user_id,
     'Report update — ' || new_label,
-    'Your report ' || ref_label || ' moved from ' || old_label
-      || ' to ' || new_label || '.',
+    notification_message,
     'citizen_report',
     jsonb_build_object(
       'type',       'citizen_report',
       'report_id',  new.id::text,
       'status',     new.status,
-      'reference',  ref_label
+      'reference',  ref_label,
+      'assigned_department', new.assigned_department
     )
   );
 
@@ -111,9 +124,12 @@ $$;
 drop trigger if exists citizen_reports_notify_status_change
   on public.citizen_reports;
 create trigger citizen_reports_notify_status_change
-  after update of status on public.citizen_reports
+  after update of status, assigned_department on public.citizen_reports
   for each row
-  when (old.status is distinct from new.status)
+  when (
+    old.status is distinct from new.status
+    or old.assigned_department is distinct from new.assigned_department
+  )
   execute function public.citizen_reports_notify_status_change();
 
 -- ─────────────────────────────────────────────────────────

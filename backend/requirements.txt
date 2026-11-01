@@ -1,0 +1,14 @@
+torch
+torchvision
+transformers
+huggingface_hub
+fastapi
+uvicorn
+pandas
+scikit-learn
+numpy
+python-multipart
+httpx
+pillow
+python-dotenv
+opencv-python-headless==4.8.1.78
